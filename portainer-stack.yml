@@ -13,9 +13,11 @@ services:
     environment:
       - AUTO_TRAIN=1
       - AUTO_TRAIN_FORCE=0
+      - TRAINING_REVISION=default
       - KAGGLE_API_TOKEN=COLE_SEU_TOKEN_AQUI
       - KAGGLE_DATASET_SLUG=closeai-python-dataset
       - KAGGLE_KERNEL_SLUG=closeai-fine-tune
+      - KAGGLE_BASE_MODEL_SOURCE=qwen-lm/qwen2.5-coder/transformers/1.5b-instruct/1
       - KAGGLE_ACCELERATOR=NvidiaTeslaT4
       - KAGGLE_POLL_INTERVAL=30
       - KAGGLE_TIMEOUT_MINUTES=180

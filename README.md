@@ -774,6 +774,7 @@ O container de producao agora faz bootstrap automatico quando `AUTO_TRAIN=1`:
 - se `modelo_python.gguf` ja existe no volume, ele sobe imediatamente;
 - se o GGUF nao existe, mas `modelo_python_fundido/` existe, ele apenas converte;
 - se nenhum dos dois existe, ele chama o pipeline Kaggle automaticamente;
+- se o dataset, a receita de treino ou a revisao configurada mudarem, ele detecta a diferenca e refaz o ciclo automaticamente;
 - quando o treino termina, ele baixa e extrai `modelo_python_fundido/`;
 - em seguida, converte para `modelo_python.gguf`;
 - por fim, sobe `llama-server` e FastAPI.
@@ -815,9 +816,11 @@ services:
     environment:
       - AUTO_TRAIN=1
       - AUTO_TRAIN_FORCE=0
+      - TRAINING_REVISION=default
       - KAGGLE_API_TOKEN=COLE_SEU_TOKEN_AQUI
       - KAGGLE_DATASET_SLUG=closeai-python-dataset
       - KAGGLE_KERNEL_SLUG=closeai-fine-tune
+      - KAGGLE_BASE_MODEL_SOURCE=qwen-lm/qwen2.5-coder/transformers/1.5b-instruct/1
       - KAGGLE_ACCELERATOR=NvidiaTeslaT4
       - KAGGLE_POLL_INTERVAL=30
       - KAGGLE_TIMEOUT_MINUTES=180
@@ -864,6 +867,7 @@ Voce precisa ajustar pelo menos:
 - `KAGGLE_API_TOKEN=COLE_SEU_TOKEN_AQUI`
 - se quiser, `KAGGLE_DATASET_SLUG`
 - se quiser, `KAGGLE_KERNEL_SLUG`
+- se quiser, `TRAINING_REVISION`
 - se quiser, `N_CTX`, `N_THREADS` e `N_BATCH`
 
 Normalmente nao precisa mexer em:
@@ -915,13 +919,23 @@ curl https://closeai.nutef.com/ready
 
 ### 12.8 Como forcar um novo treino
 
-Se voce quiser treinar de novo, sem limpar manualmente o volume:
+No uso normal, voce nao precisa ficar mexendo em `AUTO_TRAIN_FORCE`.
 
-- altere `AUTO_TRAIN_FORCE=1`;
-- redeploy o stack;
-- depois volte para `AUTO_TRAIN_FORCE=0`.
+Com `AUTO_TRAIN=1`, o container ja:
 
-Com isso o container apaga os artefatos atuais do volume, refaz o treino remoto, baixa o modelo fundido e reconstrói o GGUF.
+- treina sozinho quando ainda nao existe modelo;
+- volta a treinar sozinho quando detectar mudanca no dataset, no script de treino, no modelo base ou em `TRAINING_REVISION`.
+
+Se voce quiser disparar um novo treino de forma limpa, o melhor caminho e:
+
+- mudar `TRAINING_REVISION`, por exemplo de `default` para `v2`;
+- redeploy o stack.
+
+Como `TRAINING_REVISION` entra na assinatura do treinamento, o container detecta a mudanca e refaz o ciclo automaticamente.
+
+Use `AUTO_TRAIN_FORCE=1` apenas como override de emergencia.
+
+Agora ele e consumido para a assinatura atual do treino, entao nao deve ficar em loop de re-treino a cada restart. Mesmo assim, para operacao normal, prefira manter `AUTO_TRAIN_FORCE=0`.
 
 ### 12.9 Onde os artefatos ficam no stack
 
@@ -939,6 +953,7 @@ Tudo fica persistido no volume `closeai_data`:
 - mantenha o servico preso ao mesmo node enquanto usar volume local;
 - nao habilite healthcheck agressivo no bootstrap inicial, porque o treino remoto pode demorar bastante;
 - se quiser trocar o dataset, monte um arquivo e ajuste `DATASET_SOURCE_PATH`;
+- para pedir um novo treino deliberadamente, prefira mudar `TRAINING_REVISION`;
 - para nao expor o token em texto puro, prefira usar segredo do Swarm ou variavel de ambiente gerenciada pelo Portainer.
 
 ## 13. Endpoints da API
