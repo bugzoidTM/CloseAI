@@ -1,0 +1,16 @@
+.git
+.venv
+.venv312
+.venv-kaggle
+__pycache__
+*.pyc
+*.pyo
+*.log
+build
+generated_code.py
+kaggle-output
+llama.cpp
+modelo_python.gguf
+modelo_python_fundido
+output_model
+tests

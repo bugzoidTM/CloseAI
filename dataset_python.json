@@ -1,0 +1,50 @@
+[
+  {
+    "messages": [
+      {
+        "role": "system",
+        "content": "Voce e um especialista em Python. Gere codigo limpo, comentado e seguindo PEP 8. Use type hints e docstrings."
+      },
+      {
+        "role": "user",
+        "content": "Crie uma funcao que receba uma lista de numeros e retorne a media, mediana e desvio padrao usando apenas a biblioteca padrao."
+      },
+      {
+        "role": "assistant",
+        "content": "```python\nimport statistics\nfrom typing import Dict, List, Union\n\n\ndef calcular_estatisticas(numeros: List[Union[int, float]]) -> Dict[str, float]:\n    \"\"\"Calcula media, mediana e desvio padrao populacional.\"\"\"\n    if not numeros:\n        raise ValueError(\"A lista nao pode estar vazia.\")\n\n    return {\n        \"media\": statistics.mean(numeros),\n        \"mediana\": statistics.median(numeros),\n        \"desvio_padrao\": statistics.pstdev(numeros),\n    }\n```"
+      }
+    ]
+  },
+  {
+    "messages": [
+      {
+        "role": "system",
+        "content": "Voce e um especialista em Python. Gere codigo limpo, comentado e seguindo PEP 8. Use type hints e docstrings."
+      },
+      {
+        "role": "user",
+        "content": "Implemente um decorador que cacheie o resultado de funcoes pesadas com TTL de 60 segundos."
+      },
+      {
+        "role": "assistant",
+        "content": "```python\nimport functools\nimport time\nfrom typing import Any, Callable, TypeVar, cast\n\nF = TypeVar(\"F\", bound=Callable[..., Any])\n\n\ndef cache_ttl(ttl: int = 60) -> Callable[[F], F]:\n    \"\"\"Cacheia chamadas de uma funcao durante o TTL informado.\"\"\"\n    def decorator(func: F) -> F:\n        cache: dict[tuple[Any, frozenset[tuple[str, Any]]], tuple[Any, float]] = {}\n\n        @functools.wraps(func)\n        def wrapper(*args: Any, **kwargs: Any) -> Any:\n            key = (args, frozenset(kwargs.items()))\n            cached = cache.get(key)\n            now = time.time()\n\n            if cached is not None:\n                result, timestamp = cached\n                if now - timestamp < ttl:\n                    return result\n\n            result = func(*args, **kwargs)\n            cache[key] = (result, now)\n            return result\n\n        return cast(F, wrapper)\n\n    return decorator\n```"
+      }
+    ]
+  },
+  {
+    "messages": [
+      {
+        "role": "system",
+        "content": "Voce e um especialista em Python. Gere codigo limpo, comentado e seguindo PEP 8. Use type hints e docstrings."
+      },
+      {
+        "role": "user",
+        "content": "Crie uma CLI com argparse que leia um arquivo texto e conte linhas nao vazias."
+      },
+      {
+        "role": "assistant",
+        "content": "```python\nimport argparse\nfrom pathlib import Path\n\n\ndef contar_linhas_nao_vazias(caminho: Path) -> int:\n    \"\"\"Conta linhas com algum conteudo alem de espacos.\"\"\"\n    with caminho.open(\"r\", encoding=\"utf-8\") as arquivo:\n        return sum(1 for linha in arquivo if linha.strip())\n\n\ndef main() -> None:\n    parser = argparse.ArgumentParser(description=\"Conta linhas nao vazias.\")\n    parser.add_argument(\"arquivo\", type=Path, help=\"Arquivo de texto de entrada\")\n    args = parser.parse_args()\n\n    print(contar_linhas_nao_vazias(args.arquivo))\n\n\nif __name__ == \"__main__\":\n    main()\n```"
+      }
+    ]
+  }
+]
