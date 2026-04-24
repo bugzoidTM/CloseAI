@@ -13,14 +13,17 @@ from pathlib import Path
 from typing import Any
 
 PROJECT_DIR = Path(__file__).resolve().parent
-BUILD_ROOT = PROJECT_DIR / "build" / "kaggle"
+DATA_ROOT = Path(os.getenv("CLOSEAI_DATA_DIR", str(PROJECT_DIR))).expanduser().resolve()
+BUILD_ROOT = Path(os.getenv("KAGGLE_BUILD_ROOT", str(DATA_ROOT / "build" / "kaggle"))).expanduser().resolve()
 DATASET_BUILD_DIR = BUILD_ROOT / "dataset"
 KERNEL_BUILD_DIR = BUILD_ROOT / "kernel"
-OUTPUT_ROOT = PROJECT_DIR / "kaggle-output"
-REMOTE_SCRIPT_PATH = PROJECT_DIR / "kaggle_remote_finetune.py"
-DATASET_SOURCE_PATH = PROJECT_DIR / "dataset_python.json"
-MODEL_OUTPUT_DIR = PROJECT_DIR / "modelo_python_fundido"
-ACCESS_TOKEN_FILE = Path.home() / ".kaggle" / "access_token"
+OUTPUT_ROOT = Path(os.getenv("KAGGLE_OUTPUT_ROOT", str(DATA_ROOT / "kaggle-output"))).expanduser().resolve()
+REMOTE_SCRIPT_PATH = Path(os.getenv("REMOTE_SCRIPT_PATH", str(PROJECT_DIR / "kaggle_remote_finetune.py"))).expanduser().resolve()
+DATASET_SOURCE_PATH = Path(os.getenv("DATASET_SOURCE_PATH", str(PROJECT_DIR / "dataset_python.json"))).expanduser().resolve()
+MODEL_OUTPUT_DIR = Path(os.getenv("MODEL_OUTPUT_DIR", str(DATA_ROOT / "modelo_python_fundido"))).expanduser().resolve()
+ACCESS_TOKEN_FILE = Path(
+    os.getenv("KAGGLE_ACCESS_TOKEN_FILE", str(Path.home() / ".kaggle" / "access_token"))
+).expanduser().resolve()
 DEFAULT_MODEL_SOURCE = "qwen-lm/qwen2.5-coder/transformers/1.5b-instruct/1"
 OUTPUT_FILE_PATTERN = r"(^|/)(modelo_python_fundido\.zip|training_manifest\.json)$"
 
@@ -102,6 +105,8 @@ def kernel_metadata(refs: KaggleRefs, model_source: str) -> dict[str, Any]:
 
 
 def prepare_dataset_package(refs: KaggleRefs) -> Path:
+    if not DATASET_SOURCE_PATH.exists():
+        raise FileNotFoundError(f"Dataset nao encontrado em {DATASET_SOURCE_PATH}.")
     reset_directory(DATASET_BUILD_DIR)
     shutil.copy2(DATASET_SOURCE_PATH, DATASET_BUILD_DIR / DATASET_SOURCE_PATH.name)
     (DATASET_BUILD_DIR / "dataset-metadata.json").write_text(
@@ -112,6 +117,8 @@ def prepare_dataset_package(refs: KaggleRefs) -> Path:
 
 
 def prepare_kernel_package(refs: KaggleRefs, model_source: str) -> Path:
+    if not REMOTE_SCRIPT_PATH.exists():
+        raise FileNotFoundError(f"Script remoto nao encontrado em {REMOTE_SCRIPT_PATH}.")
     reset_directory(KERNEL_BUILD_DIR)
     shutil.copy2(REMOTE_SCRIPT_PATH, KERNEL_BUILD_DIR / "train_remote.py")
     (KERNEL_BUILD_DIR / "kernel-metadata.json").write_text(
@@ -217,10 +224,11 @@ def extract_model(output_dir: Path) -> Path:
     if MODEL_OUTPUT_DIR.exists():
         shutil.rmtree(MODEL_OUTPUT_DIR)
 
+    MODEL_OUTPUT_DIR.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(zip_path, "r") as archive:
-        archive.extractall(PROJECT_DIR)
+        archive.extractall(MODEL_OUTPUT_DIR.parent)
 
-    extracted = PROJECT_DIR / "modelo_python_fundido"
+    extracted = MODEL_OUTPUT_DIR
     if not extracted.exists():
         raise FileNotFoundError("O zip foi baixado, mas a pasta modelo_python_fundido nao apareceu apos extracao.")
     return extracted

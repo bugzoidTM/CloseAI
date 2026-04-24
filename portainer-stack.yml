@@ -1,0 +1,55 @@
+version: "3.7"
+
+services:
+  closeai:
+    image: ghcr.io/bugzoidtm/closeai:latest
+
+    networks:
+      - Nutef
+
+    volumes:
+      - closeai_data:/data
+
+    environment:
+      - AUTO_TRAIN=1
+      - AUTO_TRAIN_FORCE=0
+      - KAGGLE_API_TOKEN=COLE_SEU_TOKEN_AQUI
+      - KAGGLE_DATASET_SLUG=closeai-python-dataset
+      - KAGGLE_KERNEL_SLUG=closeai-fine-tune
+      - KAGGLE_ACCELERATOR=NvidiaTeslaT4
+      - KAGGLE_POLL_INTERVAL=30
+      - KAGGLE_TIMEOUT_MINUTES=180
+      - CLOSEAI_DATA_DIR=/data
+      - MODEL_PATH=/data/modelo_python.gguf
+      - HOST=0.0.0.0
+      - PORT=8000
+      - N_CTX=4096
+      - N_THREADS=2
+      - N_BATCH=512
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - traefik.enable=1
+        - traefik.docker.network=Nutef
+        - traefik.http.routers.closeai.rule=Host(`closeai.nutef.com`)
+        - traefik.http.routers.closeai.entrypoints=websecure
+        - traefik.http.routers.closeai.priority=1
+        - traefik.http.routers.closeai.tls.certresolver=letsencryptresolver
+        - traefik.http.services.closeai.loadbalancer.server.port=8000
+
+volumes:
+  closeai_data:
+    name: closeai_data
+
+networks:
+  Nutef:
+    external: true
+    name: Nutef

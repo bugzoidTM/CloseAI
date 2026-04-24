@@ -17,6 +17,7 @@ O projeto inclui:
 - fluxo principal para Windows;
 - fluxo equivalente para Ubuntu sem Docker;
 - runtime opcional com Docker no Ubuntu;
+- stack pronta para Portainer com Traefik e auto-bootstrap do modelo;
 - ferramentas auxiliares para dataset, VS Code, validacao e smoke test.
 
 ## 0. Instalacao passo a passo via clone do GitHub
@@ -196,6 +197,21 @@ python3 test_api.py --api-url http://127.0.0.1:8000
 
 Para transformar esse runtime em servico de producao com reinicio automatico, siga a secao `11.7`.
 
+### 0.5A Clone para producao via Portainer Stack
+
+Este e o caminho recomendado quando voce ja usa Docker Swarm + Traefik + Portainer e quer publicar a URL final sem abrir navegador para treinar manualmente.
+
+O fluxo fica assim:
+
+1. o stack sobe o container;
+2. se `modelo_python.gguf` ainda nao existir no volume, o container dispara o treino remoto no Kaggle;
+3. o container baixa o modelo fundido automaticamente;
+4. o container converte para GGUF;
+5. o container sobe `llama-server` e FastAPI;
+6. o Traefik publica em `https://closeai.nutef.com/`.
+
+Detalhe importante: no primeiro start, a URL pode levar bastante tempo para ficar disponivel, porque o container fica ocupado esperando o treino remoto terminar e a conversao local finalizar.
+
 ### 0.6 Clone para producao no Windows
 
 #### Passo 1: clonar o projeto
@@ -309,6 +325,7 @@ flowchart LR
 | `test_api.py` | Smoke test HTTP |
 | `Dockerfile` | Runtime opcional com Docker |
 | `docker-entrypoint.sh` | Entrada do container para `llama-server` + FastAPI |
+| `portainer-stack.yml` | Stack pronta para Portainer/Swarm com Traefik |
 
 ## 6. Dataset e treino
 
@@ -411,6 +428,7 @@ sudo apt-get install -y \
 | Windows | Fluxo completo implementado e validado neste workspace |
 | Ubuntu sem Docker | Fluxo equivalente implementado com scripts `.sh` |
 | Ubuntu com Docker | Runtime opcional implementado com `Dockerfile` |
+| Portainer Stack em Swarm | Stack pronta com volume persistente, Traefik e bootstrap automatico |
 
 ## 9. Fluxo no Windows
 
@@ -623,7 +641,10 @@ O `Dockerfile` deste projeto cobre o runtime local:
 - clona e compila `llama.cpp`;
 - sobe `llama-server` e FastAPI no mesmo container.
 
-O container nao treina o modelo. Ele espera que voce ja tenha `modelo_python.gguf` pronto fora da imagem.
+O container pode operar de dois jeitos:
+
+- com `modelo_python.gguf` ja pronto, ele sobe direto;
+- com `AUTO_TRAIN=1`, ele pode treinar remotamente via Kaggle, baixar o modelo fundido, converter para GGUF e so depois iniciar o runtime local.
 
 ### 11.2 Instalar Docker no Ubuntu
 
@@ -742,9 +763,187 @@ curl http://127.0.0.1:8000/ready
 journalctl -u closeai-docker -f
 ```
 
-## 12. Endpoints da API
+## 12. Fluxo no Portainer Stack
 
-### 12.1 `GET /health`
+Esta e a opcao mais proxima do que voce descreveu: colar um arquivo de stack no Portainer, deixar o servico subir sozinho, treinar via Kaggle sem navegador, baixar o modelo fundido, converter e publicar a URL final.
+
+### 12.1 Como o container se comporta no primeiro start
+
+O container de producao agora faz bootstrap automatico quando `AUTO_TRAIN=1`:
+
+- se `modelo_python.gguf` ja existe no volume, ele sobe imediatamente;
+- se o GGUF nao existe, mas `modelo_python_fundido/` existe, ele apenas converte;
+- se nenhum dos dois existe, ele chama o pipeline Kaggle automaticamente;
+- quando o treino termina, ele baixa e extrai `modelo_python_fundido/`;
+- em seguida, converte para `modelo_python.gguf`;
+- por fim, sobe `llama-server` e FastAPI.
+
+Em reinicios seguintes, como o volume persiste, o servico tende a subir bem mais rapido.
+
+### 12.2 Pre-requisitos
+
+Antes de colar o stack no Portainer, confirme:
+
+- voce esta em Docker Swarm;
+- o Traefik usa a rede externa `Nutef`;
+- a URL `closeai.nutef.com` ja aponta para o entrypoint do Traefik;
+- voce tem um token Kaggle valido;
+- o repositório publicou a imagem em `ghcr.io/bugzoidtm/closeai:latest`.
+
+Observacao importante sobre a imagem:
+
+- a imagem e publicada automaticamente pelo GitHub Actions a cada push em `main`;
+- se o pacote do GHCR aparecer privado na primeira vez, torne-o publico em `Packages` no GitHub antes de usar no Portainer.
+
+### 12.3 Stack pronta para colar no Portainer
+
+O arquivo completo tambem esta no repositório em `portainer-stack.yml`.
+
+```yaml
+version: "3.7"
+services:
+
+  closeai:
+    image: ghcr.io/bugzoidtm/closeai:latest
+
+    networks:
+      - Nutef
+
+    volumes:
+      - closeai_data:/data
+
+    environment:
+      - AUTO_TRAIN=1
+      - AUTO_TRAIN_FORCE=0
+      - KAGGLE_API_TOKEN=COLE_SEU_TOKEN_AQUI
+      - KAGGLE_DATASET_SLUG=closeai-python-dataset
+      - KAGGLE_KERNEL_SLUG=closeai-fine-tune
+      - KAGGLE_ACCELERATOR=NvidiaTeslaT4
+      - KAGGLE_POLL_INTERVAL=30
+      - KAGGLE_TIMEOUT_MINUTES=180
+      - CLOSEAI_DATA_DIR=/data
+      - MODEL_PATH=/data/modelo_python.gguf
+      - HOST=0.0.0.0
+      - PORT=8000
+      - N_CTX=4096
+      - N_THREADS=2
+      - N_BATCH=512
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: any
+        delay: 10s
+      labels:
+        - traefik.enable=1
+        - traefik.docker.network=Nutef
+        - traefik.http.routers.closeai.rule=Host(`closeai.nutef.com`)
+        - traefik.http.routers.closeai.entrypoints=websecure
+        - traefik.http.routers.closeai.priority=1
+        - traefik.http.routers.closeai.tls.certresolver=letsencryptresolver
+        - traefik.http.services.closeai.loadbalancer.server.port=8000
+
+volumes:
+  closeai_data:
+    name: closeai_data
+
+networks:
+  Nutef:
+    external: true
+    name: Nutef
+```
+
+### 12.4 O que editar antes de clicar em Deploy
+
+Voce precisa ajustar pelo menos:
+
+- `KAGGLE_API_TOKEN=COLE_SEU_TOKEN_AQUI`
+- se quiser, `KAGGLE_DATASET_SLUG`
+- se quiser, `KAGGLE_KERNEL_SLUG`
+- se quiser, `N_CTX`, `N_THREADS` e `N_BATCH`
+
+Normalmente nao precisa mexer em:
+
+- `MODEL_PATH=/data/modelo_python.gguf`
+- `CLOSEAI_DATA_DIR=/data`
+- labels do Traefik
+- rede `Nutef`
+
+### 12.5 Como subir no Portainer
+
+1. Abra `Stacks`.
+2. Clique em `Add stack`.
+3. Dê um nome, por exemplo `closeai`.
+4. Cole o YAML acima no editor.
+5. Substitua `COLE_SEU_TOKEN_AQUI` pelo token Kaggle.
+6. Clique em `Deploy the stack`.
+
+### 12.6 Como acompanhar o primeiro bootstrap
+
+No primeiro start, acompanhe os logs do servico no Portainer.
+
+Voce deve ver, em ordem:
+
+1. autenticacao no Kaggle;
+2. push do dataset;
+3. push do kernel;
+4. polling ate o job remoto concluir;
+5. download do `modelo_python_fundido.zip`;
+6. extracao do modelo fundido;
+7. conversao para GGUF;
+8. start do `llama-server`;
+9. start do FastAPI.
+
+### 12.7 Como saber que ficou pronto
+
+Quando o bootstrap terminar:
+
+- a rota `https://closeai.nutef.com/health` deve responder;
+- a rota `https://closeai.nutef.com/ready` deve responder com `ready=true`;
+- a URL `https://closeai.nutef.com/docs` deve abrir a documentacao do FastAPI.
+
+Teste rapido:
+
+```bash
+curl https://closeai.nutef.com/health
+curl https://closeai.nutef.com/ready
+```
+
+### 12.8 Como forcar um novo treino
+
+Se voce quiser treinar de novo, sem limpar manualmente o volume:
+
+- altere `AUTO_TRAIN_FORCE=1`;
+- redeploy o stack;
+- depois volte para `AUTO_TRAIN_FORCE=0`.
+
+Com isso o container apaga os artefatos atuais do volume, refaz o treino remoto, baixa o modelo fundido e reconstrói o GGUF.
+
+### 12.9 Onde os artefatos ficam no stack
+
+Tudo fica persistido no volume `closeai_data`:
+
+- `/data/modelo_python.gguf`
+- `/data/modelo_python_fundido/`
+- `/data/kaggle-output/`
+- `/data/runtime-logs/`
+- `/data/build/kaggle/`
+
+### 12.10 Dicas de produção no Portainer
+
+- mantenha `replicas: 1`, porque o modelo local fica no volume de um unico container;
+- mantenha o servico preso ao mesmo node enquanto usar volume local;
+- nao habilite healthcheck agressivo no bootstrap inicial, porque o treino remoto pode demorar bastante;
+- se quiser trocar o dataset, monte um arquivo e ajuste `DATASET_SOURCE_PATH`;
+- para nao expor o token em texto puro, prefira usar segredo do Swarm ou variavel de ambiente gerenciada pelo Portainer.
+
+## 13. Endpoints da API
+
+### 13.1 `GET /health`
 
 Retorna o estado geral do servico.
 
@@ -764,7 +963,7 @@ Exemplo:
 }
 ```
 
-### 12.2 `GET /ready`
+### 13.2 `GET /ready`
 
 Retorna `200` quando:
 
@@ -773,7 +972,7 @@ Retorna `200` quando:
 
 Retorna `503` quando o modelo nao foi gerado ou quando o backend de inferencia nao esta disponivel.
 
-### 12.3 `POST /generate`
+### 13.3 `POST /generate`
 
 Campos aceitos:
 
@@ -807,7 +1006,7 @@ Resposta tipica:
 }
 ```
 
-### 12.4 `POST /generate/stream`
+### 13.4 `POST /generate/stream`
 
 Retorna Server-Sent Events com tokens parciais.
 
@@ -818,7 +1017,7 @@ Uso indicado:
 - terminal interativo;
 - ferramentas que precisem de streaming.
 
-## 13. Configuracao
+## 14. Configuracao
 
 O arquivo `.env.example` mostra as principais variaveis.
 
@@ -851,7 +1050,7 @@ Usadas por `kaggle_remote_finetune.py`:
 | `LEARNING_RATE` | Taxa de aprendizado |
 | `ALLOW_PIP_INSTALL` | Tenta instalar modulos ausentes no ambiente remoto |
 
-## 14. Ferramentas auxiliares
+## 15. Ferramentas auxiliares
 
 ### 14.1 Converter CSV em dataset JSON
 
@@ -887,7 +1086,7 @@ python3 integrate_vscode.py \
 python3 validate.py ./generated_code.py
 ```
 
-## 15. Como ampliar o sistema
+## 16. Como ampliar o sistema
 
 ### 15.1 Ampliar o dataset
 
@@ -941,7 +1140,7 @@ Proximos passos naturais:
 - adicionar scripts `.service` prontos;
 - criar pipeline de release com binarios ou imagens publicadas.
 
-## 16. Limitacoes atuais
+## 17. Limitacoes atuais
 
 1. A validacao de saida verifica sintaxe, nao corretude semantica.
 2. O modelo pode truncar a resposta se `max_tokens` for curto.
@@ -952,29 +1151,36 @@ Proximos passos naturais:
 7. O backend `llama-cpp-python` continua sendo opcional e experimental aqui.
 8. O Docker deste repositorio cobre o runtime, nao o treino remoto.
 
-## 17. Limitacoes especificas por plataforma
+## 18. Limitacoes especificas por plataforma
 
-### 17.1 Windows
+### 18.1 Windows
 
 - os scripts principais usam PowerShell;
 - `llama-cpp-python` pode falhar em CPUs antigas com erro de instrucao invalida;
 - algumas politicas de execucao podem exigir `-ExecutionPolicy Bypass`.
 
-### 17.2 Ubuntu sem Docker
+### 18.2 Ubuntu sem Docker
 
 - depende de toolchain local (`git`, `cmake`, `build-essential`, `curl`);
 - a primeira compilacao do `llama.cpp` pode demorar;
 - o host precisa ter espaco em disco para modelo e build.
 
-### 17.3 Ubuntu com Docker
+### 18.3 Ubuntu com Docker
 
 - o build da imagem tambem compila `llama.cpp`, entao nao e instantaneo;
 - o modelo GGUF nao vai dentro da imagem por padrao;
 - voce precisa montar o arquivo GGUF via volume.
 
-## 18. Solucao de problemas
+### 18.4 Portainer Stack
 
-### 18.1 `/ready` retorna `503`
+- no primeiro bootstrap a URL pode demorar bastante para ficar pronta;
+- o treinamento ainda depende da disponibilidade da GPU gratuita no Kaggle;
+- se o volume for perdido, o bootstrap volta a treinar do zero;
+- a imagem do GHCR precisa estar publicada e acessivel pelo cluster.
+
+## 19. Solucao de problemas
+
+### 19.1 `/ready` retorna `503`
 
 Cheque:
 
@@ -982,7 +1188,7 @@ Cheque:
 - se `llama-server` subiu;
 - se `LLAMA_SERVER_URL` aponta para a porta certa.
 
-### 18.2 `syntax_valid=false`
+### 19.2 `syntax_valid=false`
 
 Causas comuns:
 
@@ -996,7 +1202,7 @@ Tente:
 - pedir uma tarefa menor;
 - reforcar que a resposta deve ser um unico bloco Python.
 
-### 18.3 Falha na conversao GGUF
+### 19.3 Falha na conversao GGUF
 
 Cheque:
 
@@ -1005,7 +1211,7 @@ Cheque:
 - se `cmake` e `build-essential` estao instalados;
 - se `tokenizer_config.json` precisa remover `extra_special_tokens`.
 
-### 18.4 Falha no Kaggle
+### 19.4 Falha no Kaggle
 
 Cheque:
 
@@ -1014,7 +1220,7 @@ Cheque:
 - permissao de escrita em `~/.kaggle/access_token`;
 - disponibilidade da GPU gratuita da conta.
 
-### 18.5 Container nao sobe
+### 19.5 Container nao sobe
 
 Cheque:
 
@@ -1023,7 +1229,17 @@ Cheque:
 - se a porta `8000` nao esta ocupada;
 - se o build da imagem terminou com sucesso.
 
-## 19. Validacao recomendada
+### 19.6 Stack no Portainer nao sai do bootstrap
+
+Cheque:
+
+- se `KAGGLE_API_TOKEN` foi colado corretamente;
+- se a imagem `ghcr.io/bugzoidtm/closeai:latest` esta acessivel;
+- se os logs mostram erro de autenticacao no Kaggle;
+- se o job remoto ficou em erro no polling;
+- se o node tem espaco em disco para armazenar o modelo final.
+
+## 20. Validacao recomendada
 
 No Windows:
 
@@ -1043,7 +1259,7 @@ python3 -m unittest discover -s tests
 python3 test_api.py --api-url http://127.0.0.1:8000
 ```
 
-## 20. Resumo
+## 21. Resumo
 
 Este projeto transforma um modelo base de codigo em um servico local especializado em Python.
 
