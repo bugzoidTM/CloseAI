@@ -19,6 +19,218 @@ O projeto inclui:
 - runtime opcional com Docker no Ubuntu;
 - ferramentas auxiliares para dataset, VS Code, validacao e smoke test.
 
+## 0. Instalacao passo a passo via clone do GitHub
+
+Se voce quer sair do zero e colocar o projeto para rodar a partir do repositorio publicado, siga esta secao primeiro.
+
+### 0.1 Clonar o projeto
+
+No Windows:
+
+```powershell
+git clone https://github.com/bugzoidTM/CloseAI.git
+cd CloseAI
+```
+
+No Ubuntu:
+
+```bash
+git clone https://github.com/bugzoidTM/CloseAI.git
+cd CloseAI
+```
+
+### 0.2 Entenda os dois caminhos possiveis
+
+Depois do clone, voce pode seguir um destes fluxos:
+
+1. `Ja tenho um modelo GGUF pronto`
+   - voce copia `modelo_python.gguf` para a raiz do projeto;
+   - nao precisa rodar treino remoto;
+   - nao precisa rodar conversao;
+   - vai direto para o deploy.
+
+2. `Preciso gerar o modelo do zero`
+   - voce configura `KAGGLE_API_TOKEN`;
+   - roda o treino remoto via Kaggle;
+   - baixa `modelo_python_fundido/`;
+   - converte para `modelo_python.gguf`;
+   - sobe a API.
+
+### 0.3 Configuracao minima importante
+
+- O arquivo `.env.example` e apenas uma referencia.
+- O projeto nao carrega `.env` automaticamente no runtime atual.
+- Para configurar a aplicacao, use `export` no shell, `$env:` no PowerShell ou `Environment=` em `systemd`.
+
+### 0.4 Clone para producao no Ubuntu sem Docker
+
+Este e o caminho mais direto para um servidor Ubuntu.
+
+#### Passo 1: instalar dependencias do host
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  python3 python3-venv python3-pip \
+  git cmake build-essential curl ca-certificates
+```
+
+#### Passo 2: clonar o projeto
+
+```bash
+git clone https://github.com/bugzoidTM/CloseAI.git
+cd CloseAI
+```
+
+#### Passo 3A: se voce ja tem `modelo_python.gguf`
+
+Copie o arquivo para a raiz do projeto:
+
+```bash
+cp /caminho/do/seu/modelo_python.gguf ./modelo_python.gguf
+```
+
+#### Passo 3B: se voce precisa gerar o modelo do zero
+
+Configure o token Kaggle:
+
+```bash
+export KAGGLE_API_TOKEN="SEU_TOKEN_AQUI"
+```
+
+Dispare o treino remoto:
+
+```bash
+./run_kaggle_finetune.sh
+```
+
+Converta para GGUF:
+
+```bash
+./convert_to_gguf.sh
+```
+
+#### Passo 4: subir a aplicacao localmente
+
+```bash
+./deploy.sh --host 0.0.0.0 --port 8000 --llama-port 8080
+```
+
+#### Passo 5: validar
+
+Em outro terminal:
+
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/ready
+python3 test_api.py --api-url http://127.0.0.1:8000
+```
+
+Se tudo estiver certo, voce ja pode transformar esse mesmo deploy em servico `systemd`. O passo a passo completo esta na secao `10.7`.
+
+### 0.5 Clone para producao no Ubuntu com Docker
+
+Use este caminho quando voce quer isolar o runtime em container, mas manter o `modelo_python.gguf` fora da imagem.
+
+#### Passo 1: instalar Docker
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+sudo usermod -aG docker "$USER"
+```
+
+Depois disso, faca logout/login.
+
+#### Passo 2: clonar o projeto
+
+```bash
+git clone https://github.com/bugzoidTM/CloseAI.git
+cd CloseAI
+```
+
+#### Passo 3: garantir que o GGUF existe
+
+Se voce ainda nao tiver `modelo_python.gguf`, gere-o pelo fluxo sem Docker primeiro:
+
+```bash
+export KAGGLE_API_TOKEN="SEU_TOKEN_AQUI"
+./run_kaggle_finetune.sh
+./convert_to_gguf.sh
+```
+
+#### Passo 4: build da imagem
+
+```bash
+docker build -t closeai-runtime .
+```
+
+#### Passo 5: subir o container
+
+```bash
+docker run --rm \
+  -p 8000:8000 \
+  -v "$(pwd)/modelo_python.gguf:/models/modelo_python.gguf:ro" \
+  -e MODEL_PATH=/models/modelo_python.gguf \
+  closeai-runtime
+```
+
+#### Passo 6: validar
+
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/ready
+python3 test_api.py --api-url http://127.0.0.1:8000
+```
+
+Para transformar esse runtime em servico de producao com reinicio automatico, siga a secao `11.7`.
+
+### 0.6 Clone para producao no Windows
+
+#### Passo 1: clonar o projeto
+
+```powershell
+git clone https://github.com/bugzoidTM/CloseAI.git
+cd CloseAI
+```
+
+#### Passo 2A: se voce ja tem `modelo_python.gguf`
+
+Copie o arquivo para a raiz do projeto.
+
+#### Passo 2B: se voce precisa gerar o modelo
+
+```powershell
+$env:KAGGLE_API_TOKEN = "SEU_TOKEN_AQUI"
+.\run_kaggle_finetune.ps1
+.\convert_to_gguf.ps1
+```
+
+#### Passo 3: subir a API
+
+```powershell
+.\deploy.ps1
+```
+
+#### Passo 4: validar
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health
+Invoke-RestMethod http://127.0.0.1:8000/ready
+python .\test_api.py
+```
+
 ## 1. O que e este sistema
 
 Este repositorio implementa um pipeline de LLM aplicado a geracao de codigo Python.
@@ -335,6 +547,69 @@ Opcao experimental:
 
 Esse modo tenta usar `llama-cpp-python`, mas o backend de producao recomendado continua sendo `llama-server`.
 
+### 10.7 Subindo em producao no Ubuntu sem Docker com systemd
+
+Depois de validar que `./deploy.sh --host 0.0.0.0 --port 8000 --llama-port 8080` funciona manualmente, voce pode registrar o servico.
+
+#### Passo 1: instalar dependencias e validar uma vez manualmente
+
+```bash
+cd /opt/CloseAI
+./deploy.sh --host 0.0.0.0 --port 8000 --llama-port 8080
+```
+
+Quando confirmar que a API subiu e respondeu, interrompa com `Ctrl+C`.
+
+#### Passo 2: criar o servico
+
+```bash
+sudo tee /etc/systemd/system/closeai.service > /dev/null <<'EOF'
+[Unit]
+Description=CloseAI FastAPI + llama-server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/CloseAI
+Environment=HOST=0.0.0.0
+Environment=PORT=8000
+Environment=N_CTX=4096
+Environment=N_THREADS=2
+Environment=N_BATCH=512
+ExecStart=/bin/bash /opt/CloseAI/deploy.sh --host 0.0.0.0 --port 8000 --llama-port 8080 --skip-install
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+Troque `User=ubuntu` pelo usuario real que vai executar o servico.
+
+#### Passo 3: habilitar e iniciar
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now closeai
+sudo systemctl status closeai
+```
+
+#### Passo 4: verificar logs
+
+```bash
+journalctl -u closeai -f
+```
+
+#### Passo 5: validar endpoint
+
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/ready
+```
+
 ## 11. Fluxo no Ubuntu com Docker
 
 Esta opcao e util quando voce quer isolar o runtime local, mas ainda prefere manter o modelo GGUF fora da imagem.
@@ -408,6 +683,64 @@ Docker vale a pena quando voce quer:
 - evitar instalar `llama.cpp` diretamente no host.
 
 Sem Docker continua sendo a opcao mais simples quando voce quer menos camadas e controle direto do processo.
+
+### 11.7 Subindo em producao no Ubuntu com Docker e systemd
+
+Depois de validar que o container sobe manualmente, voce pode registrar um servico `systemd`.
+
+#### Passo 1: build da imagem
+
+```bash
+cd /opt/CloseAI
+docker build -t closeai-runtime .
+```
+
+#### Passo 2: criar o servico
+
+```bash
+sudo tee /etc/systemd/system/closeai-docker.service > /dev/null <<'EOF'
+[Unit]
+Description=CloseAI Docker runtime
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+ExecStart=/usr/bin/docker run --rm --name closeai \
+  -p 8000:8000 \
+  -v /opt/CloseAI/modelo_python.gguf:/models/modelo_python.gguf:ro \
+  -e MODEL_PATH=/models/modelo_python.gguf \
+  closeai-runtime
+ExecStop=/usr/bin/docker stop closeai
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+#### Passo 3: habilitar e iniciar
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now closeai-docker
+sudo systemctl status closeai-docker
+```
+
+#### Passo 4: validar
+
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/ready
+```
+
+#### Passo 5: logs
+
+```bash
+journalctl -u closeai-docker -f
+```
 
 ## 12. Endpoints da API
 
