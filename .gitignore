@@ -1,16 +1,1 @@
-.venv/
-.venv312/
-.venv-kaggle/
-__pycache__/
-.pytest_cache/
-*.pyc
-*.gguf
-*.log
-generated_code.py
-modelo_python_fundido/
-codigo_python_adapter/
-llama.cpp/
-output_model/
-build/
-kaggle-output/
-.env
+Nothing needs to be added to .gitignore since only a markdown file (.md) was added, which is a source/config file and not a build artifact, dependency, or temporary file.
